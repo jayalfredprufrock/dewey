@@ -147,7 +147,7 @@ export const get = (obj: unknown, path: string): unknown => {
     for (const segment of path.split(".")) {
       if (Array.isArray(objAtPathOrVal)) {
         objAtPathOrVal = objAtPathOrVal.flatMap((item) => {
-          return item[segment] ?? [];
+          return isObj(item) ? (item[segment] ?? []) : [];
         });
         continue;
       }
@@ -161,4 +161,27 @@ export const get = (obj: unknown, path: string): unknown => {
   } catch {
     return;
   }
+};
+
+// ES has no concept of null or empty array values: nulls are not indexed, and a field
+// with no indexed values is treated as missing. Normalize in-memory values to match.
+export const normalizeFieldValue = (fieldVal: unknown): unknown => {
+  if (fieldVal === null) return undefined;
+  if (!Array.isArray(fieldVal)) return fieldVal;
+
+  const values = fieldVal.filter((v) => v !== undefined && v !== null);
+  if (!values.length) return undefined;
+
+  return values;
+};
+
+// lucene regexps always match the entire value, so a leading "^" and trailing "$" are
+// redundant (and would otherwise be treated as literal characters by lucene)
+export const toLuceneRegex = (
+  operand: string | RegExp,
+  flags?: string,
+): { source: string; caseInsensitive: boolean } => {
+  const regex = operand instanceof RegExp ? operand : new RegExp(String(operand), flags);
+  const source = regex.source.replace(/^\^/, "").replace(/(?<!\\)\$$/, "");
+  return { source, caseInsensitive: regex.flags.includes("i") };
 };

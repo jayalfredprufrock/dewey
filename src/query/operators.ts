@@ -10,7 +10,9 @@ import {
   isLatLonTuple,
   isObj,
   locationToLatLonTuple,
+  normalizeFieldValue,
   parseCondition,
+  toLuceneRegex,
   toRadians,
 } from "./util";
 
@@ -37,8 +39,8 @@ const $in = (fieldVal: MaybeArray<Primitive>, filterOperand: Primitive[]): boole
 };
 
 const $all = (fieldVal: MaybeArray<Primitive>, filterOperand: Primitive[]): boolean => {
-  if (!filterOperand.length) return true;
-  if (fieldVal === undefined) return false;
+  // ES terms_set with no terms matches nothing
+  if (!filterOperand.length || fieldVal === undefined) return false;
   return filterOperand.every((o) =>
     [fieldVal].flat().some((v) => v === coercePrimitiveOperand(v, o)),
   );
@@ -117,7 +119,9 @@ const $regex = (
   options?: { $options?: "i" },
 ): boolean => {
   if (fieldVal === undefined) return false;
-  const regex = new RegExp(filterOperand, options?.$options);
+  // lucene regexps must match the entire value, and "." matches any character (including newlines)
+  const { source, caseInsensitive } = toLuceneRegex(filterOperand, options?.$options);
+  const regex = new RegExp(`^(?:${source})$`, caseInsensitive ? "si" : "s");
   return [fieldVal].flat().some((v) => regex.test(v));
 };
 
@@ -127,11 +131,12 @@ const $like = (
   options?: { $caseInsensitive?: boolean },
 ): boolean => {
   if (fieldVal === undefined) return false;
-  // convert "*" and "%" to ".*" while escaping any other regex tokens
-  const exp = escapeRegex(filterOperand.trim().replaceAll("%", "*"), ["*", "?"])
+  // convert "*" and "%" to ".*" while escaping any other regex tokens. Like ES wildcard
+  // queries, the pattern must match the entire value
+  const exp = escapeRegex(filterOperand.replaceAll("%", "*"), ["*", "?"])
     .replaceAll("*", ".*")
     .replaceAll("?", ".");
-  const regex = new RegExp(exp, options?.$caseInsensitive ? "si" : "s");
+  const regex = new RegExp(`^${exp}$`, options?.$caseInsensitive ? "si" : "s");
   return [fieldVal].flat().some((v) => regex.test(v));
 };
 
@@ -141,7 +146,7 @@ const $includes = (
   options?: { $caseInsensitive?: boolean },
 ): boolean => {
   if (fieldVal === undefined) return false;
-  const exp = escapeRegex(filterOperand.trim());
+  const exp = escapeRegex(filterOperand);
   const regex = new RegExp(`.*${exp}.*`, options?.$caseInsensitive ? "si" : "s");
   return [fieldVal].flat().some((v) => regex.test(v));
 };
@@ -153,17 +158,18 @@ const $prefix = (
 ): boolean => {
   if (fieldVal === undefined) return false;
 
-  const fieldValues = [fieldVal].flat().map((v) => v.trim());
+  const fieldValues = [fieldVal].flat();
 
   if (options?.$caseInsensitive) {
-    return fieldValues.some((v) => v.toLowerCase().startsWith(filterOperand.trim().toLowerCase()));
+    return fieldValues.some((v) => v.toLowerCase().startsWith(filterOperand.toLowerCase()));
   }
 
-  return fieldValues.some((v) => v.startsWith(filterOperand.trim()));
+  return fieldValues.some((v) => v.startsWith(filterOperand));
 };
 
 const $empty = (fieldVal: MaybeArray<string>, filterOperand: boolean): boolean => {
-  const val = [fieldVal].flat().filter((v) => v !== undefined && !!v.trim());
+  // like an ES term query for "", only exact empty strings are considered empty (no trimming)
+  const val = [fieldVal].flat().filter((v) => v !== undefined && v !== "");
   const isEmpty = !val.length;
   return filterOperand === isEmpty;
 };
@@ -209,10 +215,13 @@ const $near = (
   });
 };
 
-const $elemMatch = (fieldVal: any[], filterOperand: any): boolean => {
-  if (!Array.isArray(fieldVal))
-    throw new Error("$elemMatch expects an array of objects as an operand.");
-  return fieldVal.some((fieldValueObj) => checkQuery(filterOperand, fieldValueObj));
+const $elemMatch = (fieldVal: MaybeArray<object>, filterOperand: any): boolean => {
+  if (fieldVal === undefined) return false;
+  // like ES nested docs, a single object is treated as an array of one
+  return [fieldVal]
+    .flat()
+    .filter(isObj)
+    .some((fieldValueObj) => checkQuery(filterOperand, fieldValueObj));
 };
 
 export const basicOperators = {
@@ -251,7 +260,7 @@ export const checkCondition = (fieldValue: unknown, condition: Condition): boole
   }
 
   const result = (basicOperators[condition.operator] as any)(
-    fieldValue,
+    normalizeFieldValue(fieldValue),
     condition.operand,
     condition.options,
   );
@@ -280,6 +289,9 @@ export const checkQuery = (query: any, obj: any): boolean => {
           passed = !queries.some((q) => checkQuery(q, obj));
           break;
       }
+    } else if (conditionOrOperand === undefined) {
+      // implicit equals with an undefined operand is ignored, mirroring convertQuery
+      continue;
     } else {
       const condition = parseCondition(conditionOrOperand);
       const fieldValue = get(obj, fieldOrOperator);

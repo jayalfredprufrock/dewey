@@ -42,7 +42,36 @@ describe("deriveMappings", () => {
     });
     const { properties } = deriveMappings(schema, { policy: { nested: ["items"] } });
     expect(properties.meta).toEqual({ type: "object", properties: { a: { type: "keyword" } } });
-    expect(properties.items).toEqual({ type: "nested", properties: { b: { type: "long" } } });
+    expect(properties.items).toEqual({
+      type: "nested",
+      include_in_parent: true,
+      properties: { b: { type: "long" } },
+    });
+  });
+
+  it("sets include_in_parent on every nested level unless disabled", () => {
+    const schema = Type.Object({
+      blocks: Type.Array(
+        Type.Object({
+          blockId: Type.String(),
+          response: Type.Array(Type.Object({ c: Type.String() })),
+        }),
+      ),
+    });
+    const nested = ["blocks", "blocks.response"];
+
+    const enabled = deriveMappings(schema, { policy: { nested } }).properties;
+    expect(enabled.blocks).toMatchObject({ type: "nested", include_in_parent: true });
+    expect(enabled.blocks!.properties.response).toMatchObject({
+      type: "nested",
+      include_in_parent: true,
+    });
+
+    const disabled = deriveMappings(schema, {
+      policy: { nested, includeInParent: false },
+    }).properties;
+    expect(disabled.blocks).not.toHaveProperty("include_in_parent");
+    expect(disabled.blocks!.properties.response).not.toHaveProperty("include_in_parent");
   });
 
   it("lets explicit properties override derived ones", () => {

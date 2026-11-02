@@ -1,5 +1,5 @@
 import type { Index } from "./search-index";
-import type { DotPath } from "./query";
+import type { AnyDotPath } from "./query";
 import type { NarrowByDiscriminator, QueryFor } from "./types";
 
 /**
@@ -10,6 +10,7 @@ import type { NarrowByDiscriminator, QueryFor } from "./types";
 export interface RepoBase {
   readonly $schema: object;
   readonly $discriminator: PropertyKey;
+  readonly $nested: string;
   readonly index: Index;
   transformOutput(hit: never): unknown;
 }
@@ -32,10 +33,10 @@ export type RepoOutput<R extends RepoBase> = ReturnType<R["transformOutput"]>;
 export type RepoDoc<R extends RepoBase> = R["$schema"];
 
 /** Typed mongo-style query for a repo's schema. */
-export type RepoQuery<R extends RepoBase> = QueryFor<R["$schema"]>;
+export type RepoQuery<R extends RepoBase> = QueryFor<R["$schema"], R["$nested"]>;
 
 /** A dotted field path into the schema (for aggregations, sort, source filters). */
-export type RepoFieldPath<R extends RepoBase> = DotPath<R["$schema"]>;
+export type RepoFieldPath<R extends RepoBase> = AnyDotPath<R["$schema"]>;
 
 /** Partial document accepted by `update`/`upsert`. */
 export type RepoUpdateData<R extends RepoBase> = Partial<R["$schema"]>;

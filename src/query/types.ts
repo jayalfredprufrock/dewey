@@ -26,11 +26,11 @@ export type Location = [number, number] | { lon: number; lat: number };
 export type LocationDistanceUnit = "miles" | "mi" | "kilometers" | "km";
 export type LocationDistance = number | `${number}${LocationDistanceUnit}`;
 
-export interface CompoundConditions<Schema> {
-  $and?: MongoesQuery<Schema>[];
-  $or?: MongoesQuery<Schema>[];
-  $nor?: MongoesQuery<Schema>[];
-  $not?: MongoesQuery<Schema>;
+export interface CompoundConditions<Schema, Extra = {}> {
+  $and?: readonly MongoesQuery<Schema, Extra>[];
+  $or?: readonly MongoesQuery<Schema, Extra>[];
+  $nor?: readonly MongoesQuery<Schema, Extra>[];
+  $not?: MongoesQuery<Schema, Extra>;
 }
 
 export type SimpleOperator = BasicOperator | NegatedOperator;
@@ -93,8 +93,18 @@ export type $Excludes<T> = EnforceType<
   { $excludes: SimpleOperatorOperand<"$excludes"> }
 >;
 export type $Prefix<T> = EnforceType<"$prefix", T, { $prefix: SimpleOperatorOperand<"$prefix"> }>;
-export type $Empty<T> = EnforceType<"$empty", T, { $empty: SimpleOperatorOperand<"$empty"> }>;
-export type $Nempty<T> = EnforceType<"$nempty", T, { $nempty: SimpleOperatorOperand<"$nempty"> }>;
+export type $Empty<T> = EnforceType<
+  "$empty",
+  T,
+  { $empty: SimpleOperatorOperand<"$empty"> },
+  MaybeArray<string>
+>;
+export type $Nempty<T> = EnforceType<
+  "$nempty",
+  T,
+  { $nempty: SimpleOperatorOperand<"$nempty"> },
+  MaybeArray<string>
+>;
 
 // special
 export type $Near<T> = EnforceType<"$near", T, { $near: SimpleOperatorOperand<"$near"> }>;
@@ -126,11 +136,14 @@ export type BasicCondition<T> =
   | $Ids<T>
   | $Exists;
 
-export type MongoesQuery<Schema = Record<string, Primitive>> =
-  | CompoundConditions<Schema>
-  | {
-      [K in keyof Schema]?: ForbidArray<Schema[K], Schema[K]> | BasicCondition<Schema[K]>;
-    };
+// `Extra` allows additional (non-flattened) conditions, e.g. `$elemMatch` (see `TypedQuery`)
+export type MongoesQuery<Schema = Record<string, Primitive>, Extra = {}> =
+  | CompoundConditions<Schema, Extra>
+  | ({
+      // multi-valued (array) fields are queried by their values, like ES: a condition
+      // matches when any value satisfies it
+      [K in keyof Schema]?: UnwrapArray<Schema[K]> | BasicCondition<UnwrapArray<Schema[K]>>;
+    } & Extra);
 
 // Helper: Checks if T is an object (but not array)
 // also don't consider lat/lon objects
@@ -155,26 +168,68 @@ export type DotPath<T, Prefix extends string = "", R = Required<T>> = {
       : `${Prefix}${K & string}`;
 }[keyof R];
 
-// Type to get the value type at a given dot path
-export type DotPathValue<
-  T,
-  P extends string,
-  R = Required<T>,
-> = P extends `${infer K}.${infer Rest}`
-  ? K extends keyof R
-    ? DotPathValue<R[K], Rest>
+// Wrap a value in an array unless it already is one (without distributing over unions)
+type AsArray<T> = [T] extends [unknown[]] ? T : T[];
+
+// Type to get the value type at a given dot path. Paths through arrays of objects
+// (at any depth) resolve to an array of the leaf values.
+export type DotPathValue<T, P extends string, R = Required<T>> =
+  R extends Array<infer I>
+    ? AsArray<DotPathValue<I, P>>
+    : P extends `${infer K}.${infer Rest}`
+      ? K extends keyof R
+        ? DotPathValue<R[K], Rest>
+        : never
+      : P extends keyof R
+        ? R[P]
+        : never;
+
+// Union-aware helpers: paths from every variant of a union, with value types merged
+// across the variants that have the path
+export type AnyDotPath<T> = T extends unknown ? DotPath<T> : never;
+export type AnyDotPathValue<T, P extends string> = T extends unknown
+  ? P extends DotPath<T> | ObjectPath<T>
+    ? DotPathValue<T, P>
     : never
-  : R extends Array<infer I>
-    ? P extends keyof I
-      ? I[P][]
-      : never
-    : P extends keyof R
-      ? R[P]
-      : never;
+  : never;
+export type AnyObjectPath<T> = T extends unknown ? ObjectPath<T> : never;
 
 export type Flatten<T> = {
-  [K in DotPath<T>]: DotPathValue<T, K>;
+  [K in AnyDotPath<T>]: AnyDotPathValue<T, K>;
 };
+
+// Dot paths to object (or array of object) values, i.e. the fields $elemMatch can target
+export type ObjectPath<T, Prefix extends string = "", R = Required<T>> = {
+  [K in keyof R]: R[K] extends Array<infer I>
+    ? IsObject<I> extends true
+      ? `${Prefix}${K & string}` | ObjectPath<I, `${Prefix}${K & string}.`>
+      : never
+    : IsObject<R[K]> extends true
+      ? `${Prefix}${K & string}` | ObjectPath<R[K], `${Prefix}${K & string}.`>
+      : never;
+}[keyof R];
+
+// Nested paths relative to an $elemMatch path, e.g. "a.b.c" within "a" becomes "b.c"
+type RelativePaths<Paths extends string, P extends string> = string extends Paths
+  ? string
+  : Paths extends `${P}.${infer Rest}`
+    ? Rest
+    : never;
+
+export type ElemMatchConditions<T, Nested extends string = string> = {
+  [P in AnyObjectPath<T> & Nested]?: {
+    $elemMatch: TypedQuery<UnwrapArray<AnyDotPathValue<T, P>>, RelativePaths<Nested, P>>;
+  };
+};
+
+/**
+ * Typed query over a (non-flattened) document type, including `$elemMatch` on object
+ * fields. `Nested` restricts `$elemMatch` to the given (nested-mapped) paths.
+ */
+export type TypedQuery<T, Nested extends string = string> = MongoesQuery<
+  Flatten<T>,
+  ElemMatchConditions<T, Nested>
+>;
 
 /*
 type Person = {
@@ -196,3 +251,42 @@ test<Person>({
 
 type Test = Flatten<Person>;
 */
+
+type CompoundKey = "$and" | "$or" | "$nor";
+
+// (separate alias so the mapped type is homomorphic and preserves tuples)
+type StrictQueries<A, T, Nested extends string> = { [I in keyof A]: StrictQuery<A[I], T, Nested> };
+
+/**
+ * Maps a query (inferred from a literal, e.g. via a `const` type parameter) to itself,
+ * except that keys unknown to the document type are replaced with an error type naming them,
+ * at any depth (`$and`/`$or`/`$nor`/`$not`/`$elemMatch`). Intersect it with the inferred
+ * query to reject unknown keys, which inference otherwise doesn't check:
+ *
+ * ```ts
+ * query<const Q extends TypedQuery<T>>(query: Q & StrictQuery<Q, T>)
+ * ```
+ */
+export type StrictQuery<Q, T, Nested extends string = string> = {
+  [K in keyof Q]: K extends CompoundKey
+    ? StrictQueries<Q[K], T, Nested>
+    : K extends "$not"
+      ? StrictQuery<Q[K], T, Nested>
+      : K extends AnyObjectPath<T> & Nested
+        ? Q[K] extends { $elemMatch: infer E }
+          ? {
+              $elemMatch: StrictQuery<
+                E,
+                UnwrapArray<AnyDotPathValue<T, K>>,
+                RelativePaths<Nested, K>
+              >;
+            }
+          : Q[K]
+        : K extends AnyDotPath<T>
+          ? Q[K]
+          : UnknownField<K & string>;
+};
+
+// An object type (rather than a string/never) so intersecting it with the inferred
+// value can't collapse the whole query to `never`; the error then names the field.
+type UnknownField<K extends string> = { [M in `Unknown field "${K}"`]: never };

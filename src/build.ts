@@ -1,7 +1,9 @@
+import type { DerivedMappings } from "./mappings";
 import { convertQuery } from "./query";
 import type { IdStrategy, VersionStrategy } from "./search-index";
 import type { SearchOptions } from "./search.types";
 import type { Obj } from "./types";
+import { validateQuery } from "./validate-query";
 
 /** Separator joining the parts of a composite (multi-field) `_id`. */
 export const ID_SEPARATOR = "#";
@@ -39,17 +41,23 @@ export const resolveVersion = <T extends Obj>(
 /**
  * Convert a mongo-style query to an ES/OS query DSL fragment. An empty/absent
  * query becomes `match_all`; otherwise the converted query is wrapped in filter
- * context (no scoring) unless `filterContext` is `false`.
+ * context (no scoring) unless `filterContext` is `false`. When the index `mappings` are
+ * given, the query is first validated against them (see `validateQuery`).
  */
-export const buildQuery = (query?: Obj, filterContext = true): Obj => {
+export const buildQuery = (query?: Obj, filterContext = true, mappings?: DerivedMappings): Obj => {
   if (isEmpty(query)) return { match_all: {} };
+  if (mappings) validateQuery(query, mappings);
   const dsl = convertQuery(query);
   return filterContext ? { bool: { filter: dsl } } : dsl;
 };
 
 /** Build the `search` request body from a mongo-style query and read options. */
-export const buildSearchBody = (query?: Obj, options?: SearchOptions): Obj => {
-  const body: Obj = { query: buildQuery(query, options?.filterContext) };
+export const buildSearchBody = (
+  query?: Obj,
+  options?: SearchOptions,
+  mappings?: DerivedMappings,
+): Obj => {
+  const body: Obj = { query: buildQuery(query, options?.filterContext, mappings) };
   if (options?.size !== undefined) body.size = options.size;
   if (options?.from !== undefined) body.from = options.from;
   if (options?.sort !== undefined) body.sort = options.sort;

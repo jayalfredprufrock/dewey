@@ -1,4 +1,4 @@
-import type { Static, TSchema } from "typebox";
+import type { TSchema } from "typebox";
 import type { MappingConfig } from "./mappings";
 import type { AllKeys, SchemaStatic } from "./types";
 
@@ -22,8 +22,11 @@ export interface IndexDef<T = any> {
   readonly id?: IdStrategy<T>;
   /** External-version source for optimistic concurrency. */
   readonly version?: VersionStrategy<T>;
-  /** Discriminator field for union schemas — enables result narrowing and mapping-merge checks. */
-  readonly discriminator?: AllKeys<T>;
+  /**
+   * Discriminator field for union schemas — enables result narrowing and mapping-merge checks.
+   * Must be a field shared by every variant.
+   */
+  readonly discriminator?: AllKeys<T> & keyof T;
   /** Mapping derivation policy, explicit overrides, and index settings. */
   readonly mapping?: MappingConfig<T>;
 }
@@ -45,7 +48,4 @@ export class Index<
     this.schema = schema;
     this.def = def;
   }
-
-  /** The document type this index stores (a union when the schema is a `Type.Union`). */
-  declare readonly $doc: unknown extends Static<Schema> ? any : Static<Schema>;
 }

@@ -2,6 +2,8 @@ import { Check, Errors } from "typebox/value";
 import { buildQuery, buildSearchBody, resolveId, resolveVersion } from "./build";
 import { DeweyError } from "./error";
 import { deriveMappings } from "./mappings";
+import type { DerivedMappings } from "./mappings";
+import type { StrictQuery } from "./query";
 import type { Search } from "./search";
 import type { Index } from "./search-index";
 import type {
@@ -13,7 +15,7 @@ import type {
   WriteResult,
 } from "./search-client";
 import type { QueryOptions, SearchHits, SearchOptions, WriteOptions } from "./search.types";
-import type { ExtractIndexSchema, IndexDiscriminator, Obj, QueryFor } from "./types";
+import type { ExtractIndexSchema, IndexDiscriminator, IndexNested, Obj, QueryFor } from "./types";
 import type {
   RepoBase,
   RepoConfig,
@@ -39,6 +41,7 @@ export type ByQueryOptions = {
 type RepoSelf<Idx extends Index, TOutput> = {
   readonly $schema: ExtractIndexSchema<Idx>;
   readonly $discriminator: IndexDiscriminator<Idx>;
+  readonly $nested: IndexNested<Idx>;
   readonly index: Idx;
   transformOutput(hit: ExtractIndexSchema<Idx>): TOutput;
 };
@@ -77,6 +80,7 @@ export class SearchRepository<
   declare readonly $self: Self;
   declare readonly $schema: ExtractIndexSchema<Idx>;
   declare readonly $discriminator: IndexDiscriminator<Idx>;
+  declare readonly $nested: IndexNested<Idx>;
 
   readonly index: Idx;
   /** The backing `Search` (the "generic Db"). Mirrors dinah's `repo.db`. */
@@ -101,6 +105,14 @@ export class SearchRepository<
 
   private get def() {
     return this.index.def as { id?: unknown; version?: unknown };
+  }
+
+  private derivedMappings?: DerivedMappings;
+
+  /** The schema-derived mappings, used to validate queries before they are sent. */
+  private get mappings(): DerivedMappings {
+    this.derivedMappings ??= deriveMappings(this.index.schema, this.index.def.mapping);
+    return this.derivedMappings;
   }
 
   /** Resolve a document's `_id` from the index's id strategy. */
@@ -168,19 +180,20 @@ export class SearchRepository<
     return item;
   }
 
-  async query<const Q extends QueryFor<Self["$schema"]>>(
-    query: Q,
+  async query<const Q extends QueryFor<Self["$schema"], Self["$nested"]>>(
+    query: Q & StrictQuery<Q, Self["$schema"], Self["$nested"]>,
     options?: QueryOptions,
   ): Promise<RepoQueryResult<Self, Q>[]> {
-    const result = await this.search(query, options);
+    // (the strict check already ran against this query)
+    const result = await this.search<Q>(query as never, options);
     return result.hits.map((h) => h.source);
   }
 
-  async search<const Q extends QueryFor<Self["$schema"]>>(
-    query: Q,
+  async search<const Q extends QueryFor<Self["$schema"], Self["$nested"]>>(
+    query: Q & StrictQuery<Q, Self["$schema"], Self["$nested"]>,
     options?: SearchOptions,
   ): Promise<SearchHits<RepoQueryResult<Self, Q>>> {
-    const body = buildSearchBody(query as Obj, options);
+    const body = buildSearchBody(query as Obj, options, this.mappings);
     const res = await this.db.search<Obj>(
       this.name,
       body,
@@ -202,17 +215,19 @@ export class SearchRepository<
     };
   }
 
-  async count(query?: QueryFor<Self["$schema"]>): Promise<number> {
-    return this.db.count(this.name, { query: buildQuery(query as Obj) });
+  async count(query?: QueryFor<Self["$schema"], Self["$nested"]>): Promise<number> {
+    return this.db.count(this.name, {
+      query: buildQuery(query as Obj, true, this.mappings),
+    });
   }
 
-  async exists(query?: QueryFor<Self["$schema"]>): Promise<boolean> {
+  async exists(query?: QueryFor<Self["$schema"], Self["$nested"]>): Promise<boolean> {
     return (await this.count(query)) > 0;
   }
 
   /** Paginate every matching document via PIT + `search_after`. */
-  async *scroll<const Q extends QueryFor<Self["$schema"]>>(
-    query?: Q,
+  async *scroll<const Q extends QueryFor<Self["$schema"], Self["$nested"]>>(
+    query?: Q & StrictQuery<Q, Self["$schema"], Self["$nested"]>,
     options?: SearchOptions,
   ): AsyncGenerator<RepoQueryResult<Self, Q>, void, unknown> {
     const keepAlive = "1m";
@@ -224,7 +239,11 @@ export class SearchRepository<
     try {
       let searchAfter = options?.searchAfter;
       for (;;) {
-        const body = buildSearchBody(query as Obj, { ...options, size, sort, searchAfter });
+        const body = buildSearchBody(
+          query as Obj,
+          { ...options, size, sort, searchAfter },
+          this.mappings,
+        );
         body.pit = { id: pit, keep_alive: keepAlive };
         const res = await this.db.search<Obj>("", body);
         if (!res.hits.length) break;
@@ -244,7 +263,7 @@ export class SearchRepository<
 
   async countBy<F extends RepoFieldPath<Self>>(
     field: F,
-    query?: QueryFor<Self["$schema"]>,
+    query?: QueryFor<Self["$schema"], Self["$nested"]>,
     options?: { uniqueField?: RepoFieldPath<Self>; size?: number },
   ): Promise<Record<string, number>> {
     const terms: Obj = { field, size: options?.size ?? 10 };
@@ -256,7 +275,7 @@ export class SearchRepository<
           : {}),
       },
     };
-    const body = buildSearchBody(query as Obj, { size: 0, aggs });
+    const body = buildSearchBody(query as Obj, { size: 0, aggs }, this.mappings);
     const res = await this.db.search<Obj>(this.name, body);
     const buckets: Obj[] = res.aggregations?.countBy?.buckets ?? [];
     return Object.fromEntries(
@@ -266,9 +285,13 @@ export class SearchRepository<
 
   async average<F extends RepoFieldPath<Self>>(
     field: F,
-    query?: QueryFor<Self["$schema"]>,
+    query?: QueryFor<Self["$schema"], Self["$nested"]>,
   ): Promise<number> {
-    const body = buildSearchBody(query as Obj, { size: 0, aggs: { avg: { avg: { field } } } });
+    const body = buildSearchBody(
+      query as Obj,
+      { size: 0, aggs: { avg: { avg: { field } } } },
+      this.mappings,
+    );
     const res = await this.db.search<Obj>(this.name, body);
     return res.aggregations?.avg?.value ?? 0;
   }
@@ -372,10 +395,10 @@ export class SearchRepository<
   }
 
   async updateByQuery(
-    query: QueryFor<Self["$schema"]>,
+    query: QueryFor<Self["$schema"], Self["$nested"]>,
     options?: ByQueryOptions,
   ): Promise<ByQueryResult> {
-    const body: Obj = { query: buildQuery(query as Obj) };
+    const body: Obj = { query: buildQuery(query as Obj, true, this.mappings) };
     if (options?.script) body.script = { source: options.script, params: options.scriptParams };
     return this.db.updateByQuery(this.name, body, {
       refresh: options?.refresh,
@@ -384,12 +407,12 @@ export class SearchRepository<
   }
 
   async deleteByQuery(
-    query: QueryFor<Self["$schema"]>,
+    query: QueryFor<Self["$schema"], Self["$nested"]>,
     options?: Omit<ByQueryOptions, "script" | "scriptParams">,
   ): Promise<ByQueryResult> {
     return this.db.deleteByQuery(
       this.name,
-      { query: buildQuery(query as Obj) },
+      { query: buildQuery(query as Obj, true, this.mappings) },
       { refresh: options?.refresh, conflicts: options?.conflicts },
     );
   }

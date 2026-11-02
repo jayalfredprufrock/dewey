@@ -37,6 +37,14 @@ export interface MappingPolicy {
   number?: "double" | "float";
   /** Object / array-of-object fields to map as `nested` rather than `object`. */
   nested?: readonly string[];
+  /**
+   * Set `include_in_parent` on `nested` fields so their values are also indexed on the parent
+   * document. Dot-path queries through nested fields (e.g. `"blocks.blockId"`) then match the
+   * same documents in OpenSearch as they do in memory (`makeFilter`), at the cost of indexing
+   * nested values once more per nesting level. `$elemMatch` still matches within a single
+   * nested element. Default `true`.
+   */
+  includeInParent?: boolean;
   /** Detect dates from typebox `format: "date-time"` (and epoch-millis number heuristics). Default `true`. */
   detectDates?: boolean;
 }
@@ -62,6 +70,7 @@ interface ResolvedPolicy {
   integer: "long" | "integer" | "short" | "byte";
   number: "double" | "float";
   nested: readonly string[];
+  includeInParent: boolean;
   detectDates: boolean;
 }
 
@@ -73,6 +82,7 @@ const resolvePolicy = (policy?: MappingPolicy): ResolvedPolicy => {
     integer: policy?.integer ?? "long",
     number: policy?.number ?? "double",
     nested: policy?.nested ?? [],
+    includeInParent: policy?.includeInParent ?? true,
     detectDates: policy?.detectDates ?? true,
   };
 };
@@ -118,10 +128,13 @@ const deriveField = (
     return unique.size === 1 ? [...unique.values()][0] : undefined;
   }
 
-  const asObject = (): EsFieldMapping => ({
-    type: policy.nested.includes(path) ? "nested" : "object",
-    properties: deriveProperties(node.properties ?? {}, policy, path),
-  });
+  const asObject = (): EsFieldMapping => {
+    const properties = deriveProperties(node.properties ?? {}, policy, path);
+    if (!policy.nested.includes(path)) return { type: "object", properties };
+    return policy.includeInParent
+      ? { type: "nested", include_in_parent: true, properties }
+      : { type: "nested", properties };
+  };
 
   const type = inferScalarType(node);
   switch (type) {

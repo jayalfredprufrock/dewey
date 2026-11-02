@@ -28,6 +28,7 @@ export default defineConfig({
       enabled: true,
       include: ["tests/**/*.test-d.ts"],
       tsconfig: "./tsconfig.test.json",
+      checker: "tsgo",
     },
   },
 });

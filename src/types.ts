@@ -1,5 +1,5 @@
 import type { Static, TSchema } from "typebox";
-import type { Flatten, MongoesQuery } from "./query";
+import type { TypedQuery } from "./query";
 
 export type Obj<T = any> = Record<string, T>;
 
@@ -31,21 +31,44 @@ export type IndexDiscriminator<I> = Extract<
   PropertyKey
 >;
 
+/** The index's nested-mapped field paths (`mapping.policy.nested`), or `never` when none are set. */
+export type IndexNested<I> =
+  ExtractIndexDef<I> extends {
+    mapping?: { policy?: { nested?: infer N extends readonly string[] } };
+  }
+    ? N[number]
+    : never;
+
 // ── Typed query surface (powered by the vendored mongoes engine) ──────────────
 
-/** Typed mongo-style query over a document type. Union-aware via `Flatten` distribution. */
-export type QueryFor<TDoc> = MongoesQuery<Flatten<TDoc>>;
+/**
+ * Typed mongo-style query over a document type. Union-aware via `Flatten` distribution.
+ * `Nested` restricts `$elemMatch` to nested-mapped paths (any object path by default).
+ */
+export type QueryFor<TDoc, Nested extends string = string> = TypedQuery<TDoc, Nested>;
 
 /** Typed mongo-style query over a typebox schema. */
 export type Query<S extends TSchema> = QueryFor<SchemaStatic<S>>;
 
 // ── Discriminated-union narrowing (ported from dinah) ─────────────────────────
 
-/** Pull a literal discriminator value out of a query object, if present as a shorthand `$eq`. */
+type DiscriminatorLiteral = string | number | boolean;
+
+// literal(s) from a shorthand `$eq`, `{ $eq: literal }` or `{ $in: [literals] }` condition
+type DiscriminatorOperand<C> = C extends DiscriminatorLiteral
+  ? C
+  : C extends { $eq: infer L extends DiscriminatorLiteral }
+    ? L
+    : C extends { $in: readonly (infer L extends DiscriminatorLiteral)[] }
+      ? L
+      : never;
+
+/**
+ * Pull the literal discriminator value(s) out of a query object, if present as a shorthand
+ * `$eq`, `{ $eq: literal }` or `{ $in: [literals] }`.
+ */
 export type ExtractDiscriminatorValue<Q, D extends keyof any> = D extends keyof Q
-  ? Q[D] extends string | number | boolean
-    ? Q[D]
-    : never
+  ? DiscriminatorOperand<Q[D]>
   : never;
 
 /**

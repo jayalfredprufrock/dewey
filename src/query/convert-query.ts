@@ -2,7 +2,13 @@
 
 import { compoundOperatorsMap } from "./constants";
 import type { ConvertQueryConfig, Condition } from "./types";
-import { isCompoundOperator, isObj, parseCondition, locationToLatLonTuple } from "./util";
+import {
+  isCompoundOperator,
+  isObj,
+  parseCondition,
+  locationToLatLonTuple,
+  toLuceneRegex,
+} from "./util";
 
 export const convertQuery = (
   query: any,
@@ -27,6 +33,9 @@ export const convertQuery = (
           convertQuery(query, config, pathPrefix, true),
         );
       }
+    } else if (conditionOrOperand === undefined) {
+      // ES has no concept of undefined values, so implicit equals with an undefined operand is ignored
+      continue;
     } else {
       const condition = parseCondition(conditionOrOperand, config?.operators);
       addBoolQuery(
@@ -35,6 +44,12 @@ export const convertQuery = (
         convertExp(`${fieldPath}`, condition),
       );
     }
+  }
+
+  // nothing left to filter on (e.g. every operand was undefined). Top level queries return undefined,
+  // while nested queries (compound/$elemMatch) match everything so they evaluate the same as makeFilter
+  if (!esQuery.bool) {
+    return inBool || pathPrefix ? { match_all: {} } : undefined;
   }
 
   // small optimization to prevent redundant top level "must",
@@ -137,13 +152,13 @@ export const convertExp = (
     }
 
     case "$regex": {
-      const regex =
-        condition.operand instanceof RegExp
-          ? condition.operand
-          : new RegExp(String(condition.operand), condition.options?.$options);
+      const { source, caseInsensitive } = toLuceneRegex(
+        condition.operand,
+        condition.options?.$options,
+      );
 
-      const exp: Record<string, string | boolean> = { value: regex.source };
-      if (regex.flags.includes("i")) {
+      const exp: Record<string, string | boolean> = { value: source };
+      if (caseInsensitive) {
         exp.case_insensitive = true;
       }
       return { regexp: { [field]: exp } };
@@ -160,7 +175,9 @@ export const convertExp = (
     }
 
     case "$includes": {
-      const exp: Record<string, string | boolean> = { value: `*${String(condition.operand)}*` };
+      // escape wildcard tokens so the operand is matched literally (as makeFilter does)
+      const operand = String(condition.operand).replace(/[\\*?]/g, "\\$&");
+      const exp: Record<string, string | boolean> = { value: `*${operand}*` };
       if (condition.options?.$caseInsensitive) {
         exp.case_insensitive = true;
       }
