@@ -35,6 +35,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
       - uses: voidzero-dev/setup-vp@v1
         with:
           node-version-file: ".node-version"
@@ -48,14 +50,7 @@ jobs:
       - name: Build
         run: vp pack
 
-      # Configure npm auth so `pnpm publish` can authenticate. The .npmrc holds a
-      # `${NPM_TOKEN}` placeholder (not the secret itself); pnpm expands it from the
-      # env at publish time. Written to ~/.npmrc so the repo/local dev is untouched.
-      - name: Configure npm auth
-        run: echo '//registry.npmjs.org/:_authToken=${NPM_TOKEN}' >> ~/.npmrc
-
       - name: Tag and Release
         run: vp exec semantic-release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}

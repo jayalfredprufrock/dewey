@@ -46,6 +46,7 @@
     "@types/node": "^24.12.2",
     "@typescript/native-preview": "7.0.0-dev.20260328.1",
     "semantic-release": "^25.0.3",
+    "sift": "catalog:",
     "typebox": "^1.3.2",
     "vite-plus": "0.2.1",
     "vitest": "^4.1.9"
