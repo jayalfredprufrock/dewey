@@ -22,11 +22,6 @@ export interface IndexDef<T = any> {
   readonly id?: IdStrategy<T>;
   /** External-version source for optimistic concurrency. */
   readonly version?: VersionStrategy<T>;
-  /**
-   * Discriminator field for union schemas — enables result narrowing and mapping-merge checks.
-   * Must be a field shared by every variant.
-   */
-  readonly discriminator?: AllKeys<T> & keyof T;
   /** Mapping derivation policy, explicit overrides, and index settings. */
   readonly mapping?: MappingConfig<T>;
 }
@@ -35,7 +30,8 @@ type IndexDefStatic<Schema extends TSchema> = IndexDef<SchemaStatic<Schema>>;
 
 /**
  * Captures the typebox schema plus index configuration (name/alias, id & version
- * strategies, discriminator, mappings). Analogous to dinah's `Table`.
+ * strategies, mappings). A union schema's discriminator is read from the
+ * schema itself; build it with `DiscriminatedUnion`.. Analogous to dinah's `Table`.
  */
 export class Index<
   Schema extends TSchema = TSchema,

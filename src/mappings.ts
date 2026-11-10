@@ -1,4 +1,5 @@
 import type { TSchema } from "typebox";
+import { flattenVariants } from "./discriminated-union";
 import { DeweyError } from "./error";
 import type { AllKeys, Obj } from "./types";
 
@@ -183,8 +184,8 @@ const deepMerge = (base: Obj, override: Obj): Obj => {
 
 /**
  * Derive an ES/OS mapping from a typebox schema per `config.policy`, then deep-merge
- * `config.properties` on top (explicit wins). Union schemas (`Type.Union([...])`)
- * merge every variant's properties into one flat superset; same-named fields whose
+ * `config.properties` on top (explicit wins). Union schemas (`Type.Union([...])`,
+ * nested unions included) merge every variant's properties into one flat superset; same-named fields whose
  * derived types conflict throw a `DeweyError({ type: "DATA_INTEGRITY" })`.
  */
 export const deriveMappings = (schema: TSchema, config?: MappingConfig): DerivedMappings => {
@@ -193,7 +194,7 @@ export const deriveMappings = (schema: TSchema, config?: MappingConfig): Derived
 
   let properties: Record<string, EsFieldMapping> = {};
   if (node.anyOf?.length) {
-    for (const variant of node.anyOf) {
+    for (const variant of flattenVariants(schema) as unknown as SchemaNode[]) {
       const variantProps = deriveProperties(variant.properties ?? {}, policy, "");
       for (const [field, mapping] of Object.entries(variantProps)) {
         const existing = properties[field];

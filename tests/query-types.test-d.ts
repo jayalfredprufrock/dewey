@@ -1,7 +1,7 @@
 import { Type } from "typebox";
 import type { Static } from "typebox";
 import { describe, expectTypeOf, test } from "vitest";
-import { Index, makeRepository, Search } from "../src";
+import { DiscriminatedUnion, Index, makeRepository, Search } from "../src";
 import type { QueryFor, RepoQuery } from "../src";
 
 const Answer = Type.Object({ statementId: Type.String(), choiceId: Type.String() });
@@ -83,7 +83,7 @@ describe("query types", () => {
   });
 
   describe("union schemas", () => {
-    const Media = Type.Union([
+    const Media = DiscriminatedUnion("kind", [
       Type.Object({
         id: Type.String(),
         kind: Type.Literal("photo"),
@@ -101,7 +101,6 @@ describe("query types", () => {
     const MediaIndex = new Index(Media, {
       name: "media",
       id: "id",
-      discriminator: "kind",
       mapping: { policy: { nested: ["chapters"] } },
     });
     class MediaRepo extends makeRepository(MediaIndex) {}
@@ -133,9 +132,38 @@ describe("query types", () => {
       expectTypeOf(await media.query({ id: "x" })).toEqualTypeOf<Static<typeof Media>[]>();
     });
 
-    test("the discriminator must be shared by every variant", () => {
+    test("the discriminator must be a literal in every variant", () => {
+      const Photo = Type.Object({
+        id: Type.String(),
+        kind: Type.Literal("photo"),
+        width: Type.Integer(),
+      });
+      const Audio = Type.Object({ id: Type.String(), kind: Type.Literal("audio") });
+      void DiscriminatedUnion("kind", [Photo, Audio]);
       // @ts-expect-error "width" only exists on the photo variant
-      void new Index(Media, { name: "media", discriminator: "width" });
+      void DiscriminatedUnion("width", [Photo, Audio]);
+      // @ts-expect-error "id" is shared but not a literal
+      void DiscriminatedUnion("id", [Photo, Audio]);
+    });
+
+    test("nested variant groups: the discriminator spans every leaf", async () => {
+      const Photo = Type.Object({ kind: Type.Literal("photo"), width: Type.Integer() });
+      const Video = Type.Object({ kind: Type.Literal("video"), durationSec: Type.Integer() });
+      const Doc = Type.Object({ kind: Type.Literal("doc"), pages: Type.Integer() });
+      const Nested = DiscriminatedUnion("kind", [Type.Union([Photo, Video]), Doc]);
+      class NestedRepo extends makeRepository(new Index(Nested, { name: "nested" })) {}
+      const nested = new NestedRepo(new Search({} as never));
+      expectTypeOf(await nested.query({ kind: "video" })).toEqualTypeOf<Static<typeof Video>[]>();
+    });
+
+    test("a plain union does not narrow", async () => {
+      const Plain = Type.Union([
+        Type.Object({ kind: Type.Literal("a"), x: Type.Integer() }),
+        Type.Object({ kind: Type.Literal("b"), y: Type.Integer() }),
+      ]);
+      class PlainRepo extends makeRepository(new Index(Plain, { name: "plain" })) {}
+      const plain = new PlainRepo(new Search({} as never));
+      expectTypeOf(await plain.query({ kind: "a" })).toEqualTypeOf<Static<typeof Plain>[]>();
     });
   });
 

@@ -25,11 +25,15 @@ export type ExtractIndexSchema<I> = I extends { schema: infer S extends TSchema 
 
 export type ExtractIndexDef<I> = I extends { def: infer D } ? D : never;
 
-/** The declared discriminator field of an index, or `never` when none is set. */
-export type IndexDiscriminator<I> = Extract<
-  ExtractIndexDef<I> extends { discriminator?: infer D } ? D : never,
-  PropertyKey
->;
+/**
+ * The discriminator an index's schema is annotated with (`discriminator.propertyName`, as built by
+ * `DiscriminatedUnion`), or `never` for a plain union or object schema.
+ */
+export type IndexDiscriminator<I> = I extends {
+  schema: { discriminator: { propertyName: infer D extends string } };
+}
+  ? D
+  : never;
 
 /** The index's nested-mapped field paths (`mapping.policy.nested`), or `never` when none are set. */
 export type IndexNested<I> =

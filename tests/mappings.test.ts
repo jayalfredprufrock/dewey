@@ -91,6 +91,18 @@ describe("deriveMappings", () => {
     expect(properties.durationSec).toEqual({ type: "long" });
   });
 
+  it("flattens nested unions before merging", () => {
+    const schema = Type.Union([
+      Type.Union([
+        Type.Object({ kind: Type.Literal("photo"), width: Type.Integer() }),
+        Type.Object({ kind: Type.Literal("video"), durationSec: Type.Integer() }),
+      ]),
+      Type.Object({ kind: Type.Literal("doc"), pages: Type.Integer() }),
+    ]);
+    const { properties } = deriveMappings(schema);
+    expect(Object.keys(properties).sort()).toEqual(["durationSec", "kind", "pages", "width"]);
+  });
+
   it("throws on conflicting union field types", () => {
     const schema = Type.Union([
       Type.Object({ shared: Type.Integer() }),

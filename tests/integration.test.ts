@@ -1,12 +1,19 @@
 import { Client } from "@opensearch-project/opensearch";
 import { Type } from "typebox";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { Index, isDeweyError, makeRepository, openSearch, Search } from "../src";
+import {
+  DiscriminatedUnion,
+  Index,
+  isDeweyError,
+  makeRepository,
+  openSearch,
+  Search,
+} from "../src";
 
 // Opt-in: only runs when DEWEY_OS_URL points at a reachable OpenSearch cluster.
 const NODE = process.env.DEWEY_OS_URL;
 
-const MediaSchema = Type.Union([
+const MediaSchema = DiscriminatedUnion("kind", [
   Type.Object({
     id: Type.String(),
     kind: Type.Literal("photo"),
@@ -27,7 +34,6 @@ const MediaIndex = new Index(MediaSchema, {
   name: `dewey_it_media_${Date.now()}`,
   id: "id",
   version: "ver",
-  discriminator: "kind",
 });
 
 class MediaRepo extends makeRepository(MediaIndex, { validate: true }) {}

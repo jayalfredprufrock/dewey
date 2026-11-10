@@ -1,3 +1,4 @@
+export * from "./discriminated-union";
 export * from "./error";
 export * from "./mappings";
 export * from "./repo";

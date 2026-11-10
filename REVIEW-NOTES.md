@@ -85,8 +85,8 @@ are approximate — confirm before editing.
       (ExtractDiscriminatorValue). `query({ kind: { $eq: 'circle' } })` returns the full union; `query({ kind: 'circle' })`
       narrows. Verified via tsgo. **Fix:** also extract the literal from `{ $eq }`/`{ $in: [lit] }` forms.
 
-- [ ] **Variant-only `discriminator` accepted silently** — `src/search-index.ts` (IndexDef.discriminator
-      is `AllKeys<T>`, not shared keys). `discriminator: 'radius'` type-checks but silently disables narrowing.
+- [x] **Variant-only `discriminator` accepted silently** — `src/search-index.ts` (IndexDef.discriminator
+      is `AllKeys<T>`, not shared keys). `discriminator: 'radius'` type-checks but silently disables narrowing. _Resolved: the discriminator now comes from `DiscriminatedUnion`, which requires a literal in every variant._
       **Fix:** constrain to shared keys (`AllKeys<T> & keyof …` intersection across variants), like IdStrategy.
 
 ---
