@@ -1,7 +1,7 @@
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 import { describe, expect, it } from "vitest";
-import { DiscriminatedUnion, discriminatorOf, flattenVariants } from "../src";
+import { DiscriminatedUnion, IsDiscriminatedUnion, flattenVariants } from "../src";
 
 const Cat = Type.Object({ kind: Type.Literal("cat"), meow: Type.String() });
 const Dog = Type.Object({ kind: Type.Literal("dog"), bark: Type.Number() });
@@ -15,10 +15,10 @@ describe("DiscriminatedUnion", () => {
     expect(Value.Check(Pet, { kind: "dog", meow: "x" })).toBe(false);
   });
 
-  it("discriminatorOf reads the annotation, ignores plain unions and objects", () => {
-    expect(discriminatorOf(DiscriminatedUnion("kind", [Cat, Dog]))).toBe("kind");
-    expect(discriminatorOf(Type.Union([Cat, Dog]))).toBeUndefined();
-    expect(discriminatorOf(Cat)).toBeUndefined();
+  it("IsDiscriminatedUnion recognises the annotation, ignores plain unions and objects", () => {
+    expect(IsDiscriminatedUnion(DiscriminatedUnion("kind", [Cat, Dog]))).toBe(true);
+    expect(IsDiscriminatedUnion(Type.Union([Cat, Dog]))).toBe(false);
+    expect(IsDiscriminatedUnion(Cat)).toBe(false);
   });
 
   it("flattenVariants flattens nested unions", () => {

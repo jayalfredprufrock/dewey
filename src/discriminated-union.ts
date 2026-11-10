@@ -12,10 +12,10 @@ export type UnionMember = TObject | TUnion<UnionMember[]>;
  * `discriminator.propertyName` shape. Structural on purpose: a schema with this shape from any
  * builder (handshake's, dinah's or mobx-toolbox's `DiscriminatedUnion`) is accepted as-is.
  */
-export type DiscriminatedUnionSchema<
+export type TDiscriminatedUnion<
   D extends string = string,
-  V extends TSchema[] = TSchema[],
-> = TUnion<V> & { discriminator: { propertyName: D } };
+  Types extends TSchema[] = TSchema[],
+> = TUnion<Types> & { discriminator: { propertyName: D } };
 
 /** Every object variant of a union schema type, with nested unions flattened away. */
 export type UnionVariants<T> =
@@ -68,19 +68,20 @@ export function DiscriminatedUnion<
   propertyName: D,
   variants: [...V],
   options?: TSchemaOptions,
-): DiscriminatedUnionSchema<D, FlattenVariants<V>> {
+): TDiscriminatedUnion<D, FlattenVariants<V>> {
   return Union(variants.flatMap(flattenVariants), {
     ...options,
     discriminator: { propertyName },
-  }) as unknown as DiscriminatedUnionSchema<D, FlattenVariants<V>>;
+  }) as unknown as TDiscriminatedUnion<D, FlattenVariants<V>>;
 }
 
-/** The discriminator a schema is annotated with, or `undefined` for a plain union or an object. */
-export function discriminatorOf(schema: unknown): string | undefined {
-  if (!IsUnion(schema)) return undefined;
-  const name = (schema as { discriminator?: { propertyName?: unknown } }).discriminator
-    ?.propertyName;
-  return typeof name === "string" ? name : undefined;
+/** True when `schema` is a union carrying a `discriminator.propertyName`. */
+export function IsDiscriminatedUnion(schema: unknown): schema is TDiscriminatedUnion {
+  return (
+    IsUnion(schema) &&
+    typeof (schema as { discriminator?: { propertyName?: unknown } }).discriminator
+      ?.propertyName === "string"
+  );
 }
 
 /** Every object variant of a union schema, with nested unions flattened away. */
