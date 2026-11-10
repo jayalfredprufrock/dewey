@@ -21,6 +21,23 @@ export type DiscriminatedUnionSchema<
 export type UnionVariants<T> =
   T extends TUnion<infer V> ? UnionVariants<V[number]> : T extends TObject ? T : never;
 
+/**
+ * A variant list with nested unions spliced in place, as a tuple: the type-level counterpart of
+ * `variants.flatMap(flattenVariants)`. A tuple (not `UnionVariants<...>[]`) because TypeBox's
+ * `Static` only resolves a union's members from a tuple.
+ */
+export type FlattenVariants<V extends TSchema[]> = [Extract<V[number], TUnion>] extends [never]
+  ? V
+  : FlattenInto<V, []>;
+
+/** Tail-recursive (accumulator) so long variant lists don't hit TypeScript's depth limit. */
+type FlattenInto<V extends TSchema[], Acc extends TSchema[]> = V extends [
+  infer F extends TSchema,
+  ...infer R extends TSchema[],
+]
+  ? FlattenInto<R, F extends TUnion<infer N> ? [...Acc, ...FlattenVariants<N>] : [...Acc, F]>
+  : Acc;
+
 /** Keys of an object schema whose property schema is a literal. */
 type LiteralKeys<S> =
   S extends TObject<infer P>
@@ -35,8 +52,10 @@ type CommonLiteralKeys<S> = (S extends any ? (k: LiteralKeys<S>) => void : never
   : never;
 
 /**
- * Build a union whose variants are told apart by a literal-valued property (handshake's rule):
- * it's a compile error unless `propertyName` is a `Type.Literal` in every (leaf) variant.
+ * Build a union whose variants are told apart by a literal-valued property: it's a compile error
+ * unless `propertyName` is a `Type.Literal` in every (leaf) variant. Variant groups
+ * (`Type.Union([...])`) are flattened, so the built schema's `anyOf` is always a flat list of
+ * objects, the shape OpenAPI's `oneOf` + `discriminator` expects.
  *
  * ```ts
  * const Media = DiscriminatedUnion("kind", [Photo, Video]);
@@ -45,11 +64,15 @@ type CommonLiteralKeys<S> = (S extends any ? (k: LiteralKeys<S>) => void : never
 export function DiscriminatedUnion<
   const V extends UnionMember[],
   D extends CommonLiteralKeys<UnionVariants<V[number]>>,
->(propertyName: D, variants: [...V], options?: TSchemaOptions): DiscriminatedUnionSchema<D, V> {
-  return Union(variants, {
+>(
+  propertyName: D,
+  variants: [...V],
+  options?: TSchemaOptions,
+): DiscriminatedUnionSchema<D, FlattenVariants<V>> {
+  return Union(variants.flatMap(flattenVariants), {
     ...options,
     discriminator: { propertyName },
-  }) as unknown as DiscriminatedUnionSchema<D, V>;
+  }) as unknown as DiscriminatedUnionSchema<D, FlattenVariants<V>>;
 }
 
 /** The discriminator a schema is annotated with, or `undefined` for a plain union or an object. */

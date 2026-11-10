@@ -154,6 +154,7 @@ describe("query types", () => {
       class NestedRepo extends makeRepository(new Index(Nested, { name: "nested" })) {}
       const nested = new NestedRepo(new Search({} as never));
       expectTypeOf(await nested.query({ kind: "video" })).toEqualTypeOf<Static<typeof Video>[]>();
+      expectTypeOf(Nested.anyOf).toEqualTypeOf<[typeof Photo, typeof Video, typeof Doc]>();
     });
 
     test("a plain union does not narrow", async () => {

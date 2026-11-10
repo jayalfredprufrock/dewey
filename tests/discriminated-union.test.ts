@@ -25,4 +25,10 @@ describe("DiscriminatedUnion", () => {
     const Pet = DiscriminatedUnion("kind", [Type.Union([Cat, Dog]), Fish]);
     expect(flattenVariants(Pet)).toEqual([Cat, Dog, Fish]);
   });
+
+  it("flattens variant groups so anyOf is a flat list of objects", () => {
+    const Pet = DiscriminatedUnion("kind", [Type.Union([Cat, Dog]), Fish]);
+    expect(Pet.anyOf).toEqual([Cat, Dog, Fish]);
+    expect(Value.Check(Pet, { kind: "fish", fins: 2 })).toBe(true);
+  });
 });
